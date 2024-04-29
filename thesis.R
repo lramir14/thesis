@@ -5,7 +5,7 @@ library(stringr)
 # Function to scrape individual pages
 scrape_page <- function(url) {
   page <- read_html(url)
-  content <- page %>% html_nodes(".entry-content p") %>% html_text()
+  content <- page |>  html_nodes(".entry-content p") %>% html_text()
   return(content)
 }
 
@@ -15,9 +15,9 @@ main_page <- read_html(main_url)
 
 # Extract titles and URLs
 titles_xpath <- "/html/body/div[3]/div[2]/div/div[1]/div[1]/article/div[2]/h2/a"
-titles <-main_page %>% html_nodes(xpath = titles_xpath) %>% html_text()
+titles <-main_page |>  html_nodes(xpath = titles_xpath)  |>  html_text()
 urls_xpath <- "/html/body/div[3]/div[2]/div/div[1]/div[1]/article/div[2]/h2/a"
-urls <- main_page %>% html_nodes(xpath = urls_xpath) %>% html_attr("href")
+urls <- main_page |>  html_nodes(xpath = urls_xpath) |>  html_attr("href")
 print(titles)
 print(urls)
 # Scrape content from each page
@@ -32,7 +32,7 @@ print(data$content[1])
 
 scrape_page <- function(url) {
   page <- read_html(url)
-  content <- page %>% html_nodes(".entry-content p") %>% html_text()
+  content <- page |>  html_nodes(".entry-content p") %>% html_text()
   return(content)
 }
 
@@ -55,9 +55,9 @@ for(i in 140:200) {
   
   # Extract titles and URLs
   titles_xpath <- "/html/body/div[3]/div[2]/div/div[1]/div[1]/article/div[2]/h2/a"
-  titles <- page %>% html_nodes(xpath = titles_xpath) %>% html_text()
+  titles <- page  |>  html_nodes(xpath = titles_xpath) %>% html_text()
   urls_xpath <- "/html/body/div[3]/div[2]/div/div[1]/div[1]/article/div[2]/h2/a"
-  urls <- page %>% html_nodes(xpath = urls_xpath) %>% html_attr("href")
+  urls <- page |>  html_nodes(xpath = urls_xpath) %>% html_attr("href")
   
   # Scrape content from each page
   contents <- lapply(urls, scrape_page)
@@ -135,6 +135,7 @@ library(tidyverse)
 library(tidyr)
 library(tidytext)
 library(udpipe)
+library(ldatuning)
 
 #lemmatize corpus
 ud_model <- udpipe_download_model(language = "spanish", model_dir = ".")
@@ -147,14 +148,24 @@ annotated_df <- as.data.frame(annotated_text)
 
 write.csv(annotated_df, file = "annotated_df.csv")
 saveRDS(annotated_text, "annotated_text.rds")
-annotated_df <- read.csv2("annotated_df.csv")
+annotated_df <- read.csv("annotated_df.csv")
 annotated_text <- readRDS("annotated_text.rds")
-full_data$lemmatized_content <- annotated_df$lemma
+#full_data$lemmatized_content <- annotated_df$lemma
+lemma_aggregated <- annotated_df %>%
+  group_by(doc_id) %>%
+  summarize(lemmatized_content = paste(lemma, collapse = " "), .groups = 'drop')
+
+# Ensure the order matches full_data's doc_id order
+lemma_aggregated <- lemma_aggregated %>%
+  right_join(full_data, by = "X")
+full_data$lemmatized_content <- lemma_aggregated$lemmatized_content
+
 
 # Combine lemmatized words back into documents
-full_data$lemmatized_content <- with(annotated_df, ave(lemma, doc_id, FUN = paste, collapse = " "))
+#full_data$lemmatized_content <- with(annotated_df, ave(lemma, X, FUN = paste, collapse = " "))
 
 # Define your custom stopwords. Revisar dos veces si conviene remover "méxico" y "pesos mensuales" para el bigrama. 
+full_data<- read.csv("full_data_lemm.csv")
 
 custom_stopwords <- c("presidente", "andrés", "manuel", "lópez", "obrador","+","inicia video","finaliza video", "intervención inaudible","méxico","permiso señor","pesos mensuales","pesos","interlocutor","interlocutora","ciento","pregunta","señor","caso","si","entonces","gracias","aquí","va","vamos","ahora","bueno","usted","si","van","centavos","ver","ahí","cómo","pues","ser","así","baja","año","hoy","días")
 all_stopwords <- c(stopwords("es"), custom_stopwords)
@@ -177,22 +188,38 @@ tokens_data <- full_data$content %>%
 dfm_data <- tokens_data |> 
   dfm() |> 
   dfm_trim(min_termfreq = 15)
+#------------------------------------------------------------------------------------------------
+#Test number of topics
+dtm<- convert(dfm_data, to = "topicmodels")
 
+results <- FindTopicsNumber(
+  dfm_data,
+  topics = seq(from = 5, to = 20, by = 5),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  mc.cores = 2,
+  verbose = TRUE
+)
+plot(results)
+
+#------------------------------------------------------------------------------------------------
 #print(dfm_data)
 
 num_topics <- 10  # for example, specifying 10 topics
 set.seed(123)
 lda_model <- LDA(dfm_data, k = num_topics, method = "Gibbs", control=list(alpha=1))
-lda_model2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = list(alpha = 5)) 
-lda_lemm <- readRDS("lda_lemm.RDS")
-#Here alpha =5 because it's a guideline suggested by Griffiths and Steyvers (2004) suggest a value of 50/k for α and 0.1 for δ
+lda_model2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = list(alpha = 5))
 
-#save the model 
-saveRDS(lda_model, file = "lda.rds")
-lda_model <- readRDS("lda.rds")
+lda_lemm2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = list(alpha = 5)) 
+saveRDS(lda_lemm2, file = "lda_lemm_2.rds")
+lda_lemm2 <- readRDS("lda_lemm_2.RDS")
+#Here alpha =5 because it's a guideline suggested by Griffiths and Steyvers (2004) suggest a value of 50/k for α and 0.1 for δ
+#lda_model <- readRDS("lda_lemm_2.rds")
+#lda_model2 <- readRDS("lda.rds")
 # Explore the results
 # Get the terms per topic
-top_terms <- terms(lda_model, 10)  # Top 10 terms for each topic. Topics are group of words that are the most important to those topics. 
+top_terms <- terms(lda_lemm2, 10)  # Top 10 terms for each topic. Topics are group of words that are the most important to those topics. 
 top_terms_df <-  as.data.frame(top_terms)
 
 kable_out <-  kable(top_terms_df, format = "html") 
@@ -204,9 +231,11 @@ p <- grid.table(top_terms_df)
 jpeg("table.jpg", width = 800, height = 600)
 grid.draw(p)
 dev.off()
+
+
 #-----------------------------------------------------------------------------------------------------
 #FOR LDA LEMM MODEL 
-top_terms_lemm <- terms(lda_lemm, 10)  # Top 10 terms for each topic. Topics are group of words that are the most important to those topics. 
+top_terms_lemm <- terms(lda_lemm2, 10)  # Top 10 terms for each topic. Topics are group of words that are the most important to those topics. 
 top_terms_df_lemm <-  as.data.frame(top_terms_lemm)
 
 kable_out_l <-  kable(top_terms_df_lemm, format = "html") 
@@ -220,11 +249,11 @@ grid.draw(p_l)
 dev.off()
 
 # Get the topic distribution across documents
-topics(lda_model)
+#topics(lda_model)
 
 #plot the distribution of topics using tidytext 
 
-ap_topics <- tidy(lda_model, matrix = "beta")
+ap_topics <- tidy(lda_lemm2, matrix = "beta")
 
 ap_top_terms <- ap_topics %>%
   group_by(topic) %>%
@@ -238,21 +267,26 @@ plot_terms <- ap_top_terms %>%
   ggplot(aes(beta, term, fill = factor(topic))) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~ topic, scales = "free") +
-  scale_x_continuous(limits = c(0, 0.015))+
+  scale_x_continuous(limits = c(0, 0.030))+
   scale_y_reordered()
 
 plot_terms
 
-ggsave("facet_plot.jpeg", plot = plot_terms, width = 12, height = 8, dpi = 300)
+ggsave("facet_plot_lemm.jpeg", plot = plot_terms, width = 12, height = 8, dpi = 300)
 
+#---------------------------------------------------------------
+#Use LDAvis to understand the output 
+phi <- posterior(lda_lemm2)$terms
+theta <- posterior(lda_lemm2)$topics
+vocab <- colnames(phi)
+doc.length <- rowSums(as.matrix(dtm))
+term.frequency <- colSums(as.matrix(dtm))
 
-
-#now to create a table and visualize them easily
-
+# Use LDAvis::createJSON to prepare the data
 
 lda_vis_data <- LDAvis::createJSON(
-  phi = posterior(lda_model)$terms,
-  theta = posterior(lda_model)$topics,
+  phi = posterior(lda_lemm2)$terms,
+  theta = posterior(lda_lemm2)$topics,
   doc.length = rowSums(as.matrix(dfm_data)),
   vocab = colnames(as.matrix(dfm_data)),
   term.frequency = colSums(as.matrix(dfm_data))
@@ -296,7 +330,7 @@ ggplot(plot_data, aes(x = reorder(Term, Beta), y = Beta, fill = as.factor(Topic)
 
 #But we can also look at topics and assign them to documents, not only wordclouds. Topics per documents
 
-topic_probabilities <- posterior(lda_model)$topics
+topic_probabilities <- posterior(lda_lemm2)$topics
 
 # Transforming the data into a matrix format suitable for a heatmap
 topic_matrix <- as.matrix(topic_probabilities)
@@ -317,7 +351,7 @@ p_ly<- plot_ly(x = colnames(topic_matrix), y = rownames(topic_matrix), z = topic
         type = "heatmap", colorscale = 'Viridis') %>%
   layout(yaxis = list(autorange = "reversed"))
 
-plotly::export(p_ly, file = "heatmap_plotly.png")
+plotly::export(p_ly, file = "heatmap_plotly_lemm2.png")
 
 #---------------------------------------------------------------------------------------------------
 #heatmap with the lemm model 
@@ -340,7 +374,7 @@ p_ly<- plot_ly(x = colnames(topic_matrix_l), y = rownames(topic_matrix_l), z = t
                type = "heatmap", colorscale = 'Viridis') %>%
   layout(yaxis = list(autorange = "reversed"))
 
-plotly::export(p_ly, file = "heatmap_plotly_lemm.png")
+plotly::export(p_ly, file = "heatmap_plotly_lemm2.png")
 
 ##new code to plot. BAr plot does not work cuz we have too many speeches (documents)
 
@@ -572,7 +606,7 @@ for (i in 1:num_communities) {
 #---------------------------------------------------------------------
 #For visualizing change of topics by date
 #I'm missing a vector to name each "topic" as the main idea for that group. 
-topic_probabilities <- posterior(lda_lemm)$topics#changed the base model with the lemmatized version
+topic_probabilities <- posterior(lda_lemm2)$topics#changed the base model with the lemmatized version
 
 class(full_data$date)
 full_data$date <- as.Date(full_data$date)
@@ -597,10 +631,10 @@ ggplot(topic_trends_long, aes(x = year, y = Probability, color = Topic, group=To
   labs(x = "Year", y = "Average Topic Probability", title = "Trends of Topics Over Years") 
   
 #now let's do the same analysis by month. Rename the topics to some meaningful term
-full_data<- full_data |> 
+full_data_dates<- full_data |> 
   mutate(date = as.Date(date,format = "%Y-%m-%d"),YearMonth=format(date,"%Y-%m"))
-write.csv(full_data,file = "full_data_dates.csv")
-full_data_dates<- read.csv("full_data_dates.csv")
+#write.csv(full_data,file = "full_data_dates.csv")
+#full_data_dates<- read.csv("full_data_dates.csv")
 
 topic_month_trends <- full_data_dates %>%
   group_by(YearMonth) %>%
@@ -619,7 +653,7 @@ ggplot(topic_month_trends_long, aes(x = YearMonth, y = Probability, group = Topi
 
 #Posibles nombres para los tópicos. One idea is to use the 3 most likely terms of each topic to a string that represents a pseudo-name for each topic.
 
-top5termsPerTopic <- terms(lda_lemm, 3)
+top5termsPerTopic <- terms(lda_lemm2, 3)
 topicNames <- apply(top5termsPerTopic, 2, paste, collapse=" ")
 
 if ((ncol(topic_trends) - 1) == length(topicNames)) {
@@ -639,35 +673,46 @@ yearly_trend_plot_lemm <- ggplot(topic_trends_long, aes(x = year, group=factor(T
   geom_area(aes(y = Probability, fill=Topic))+
   scale_fill_manual(values = palette)+
   theme_minimal() +
-  labs(x = "Year", y = "Average Topic Probability", title = "Trends of Topics Over Years") 
+  labs(x = "Year", y = "Average Topic Probability", title = "Trends of Topics Over Years")
+yearly_trend_plot_lemm
 
 
 #plot for the monthly
+topic_probabilities <- posterior(lda_lemm2)$topics
 
-  topic_month_trends <- full_data_dates %>%
-    group_by(YearMonth) %>%
-    summarise(across(starts_with("Topic"), mean, na.rm = TRUE))
+full_data$date <- as.Date(full_data$date)  # Convert to Date class if not already
+
+# Combine topic probabilities with the relevant columns from `full_data`
+topic_distributions <- cbind(full_data[, c("date", "title", "urls")], topic_probabilities)
+
+topic_month_trends <- topic_distributions %>%
+  mutate(month_year = format(date, "%Y-%m")) %>%
+  group_by(month_year) %>%
+  summarise(across(`1`:`10`, mean, na.rm = TRUE))
   #changing names of columns. 
-  if ((ncol(topic_month_trends) - 1) == length(topicNames)) {
+ 
+
+if ((ncol(topic_month_trends) - 1) == length(topicNames)) {
     # Keep the "Year" column name, and rename the rest with topicNames
     colnames(topic_month_trends)[-1] <- topicNames
   } else {
     warning("The number of topic columns does not match the length of topicNames.")
   }
   #creating the dataframe to plot
-  topic_month_trends_long <- topic_month_trends |> 
-    pivot_longer(-YearMonth, names_to = "Topic",values_to = "Probability")
+topic_month_trends_long <- topic_month_trends |> 
+  pivot_longer(-month_year, names_to = "Topic",values_to = "Probability")
   
   #Visualization for the monthly one 
-  
-monthly_trend_plot<- ggplot(topic_month_trends_long, aes(x = YearMonth, y = Probability, group = Topic, color=Topic)) +
+
+monthly_trend_plot<- ggplot(topic_month_trends_long, aes(x = month_year, y = Probability, group = Topic, color=Topic)) +
   geom_area(aes(y = Probability, fill=Topic)) +
   scale_fill_manual(values = palette)+
   theme_minimal() +
   coord_flip()+
   labs(x = "Year-Month", y = "Average Topic Probability", title = "Topic Trends Over Months")
-ggsave("monthly_trend_plot_lemm.jpeg", plot = monthly_trend_plot, width = 12, height = 8, dpi = 300)
-ggsave("yearly_trend_plot_lemm.jpeg", plot = yearly_trend_plot_lemm, width = 12, height = 8, dpi = 300)
+monthly_trend_plot
+ggsave("monthly_trend_plot_lemm2.jpeg", plot = monthly_trend_plot, width = 12, height = 8, dpi = 300)
+ggsave("yearly_trend_plot_lemm2.jpeg", plot = yearly_trend_plot_lemm, width = 12, height = 8, dpi = 300)
 
 #-----------------------------------------------------------------------------------
 #Create several models and evaluate them 
@@ -728,7 +773,7 @@ annotated_df_elect <- read.csv("annotated_df_elect.csv")
 
 #annotated_df <- read.csv2("annotated_df.csv")
 #annotated_text <- readRDS("annotated_text.rds")
-data_election<- data_election_21
+#data_election<- data_election_21
 annotated_df_elect$doc_id <- gsub("doc", "", annotated_df_elect$doc_id)
 lemmatized_by_doc_elect <- annotated_df_elect |> 
   group_by(doc_id) |> 
@@ -744,7 +789,7 @@ data_election$doc_id <- as.integer(data_election$doc_id)
 
 data_election<- left_join(data_election, lemmatized_by_doc_elect, by = "doc_id")
 #write.csv(data_election,file = "data_election.csv")
-
+data_election <- read.csv("data_election.csv")
 
 
 # Define your custom stopwords. Revisar dos veces si conviene remover "méxico" y "pesos mensuales" para el bigrama. 
@@ -776,7 +821,7 @@ dfm_data <- tokens_data |>
 
 num_topics <- 10  
 set.seed(123)
-#da_model_elect <- LDA(dfm_data, k = num_topics, method = "Gibbs", control=list(alpha=1))
+#lda_model_elect <- LDA(dfm_data, k = num_topics, method = "Gibbs", control=list(alpha=1))
 lda_model_elect2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = list(alpha = 5)) 
 
 #Here alpha =5 because it's a guideline suggested by Griffiths and Steyvers (2004) suggest a value of 50/k for α and 0.1 for δ
@@ -784,7 +829,7 @@ lda_model_elect2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = li
 #save the model 
 #saveRDS(lda_model_elect, file = "lda_elect_alpha1.rds")
 saveRDS(lda_model_elect2, file = "lda_elect2_alpha5.rds")
-#lda_model_elect <- readRDS("lda_elect2_alpha5.rds")
+lda_model_elect <- readRDS("lda_elect2_alpha5.rds")
 
 #First table of topics and terms Alpha =1 
 
@@ -902,3 +947,71 @@ monthly_trend_elect_plot <- ggplot(topic_month_trends_long, aes(x = YearMonth, y
 print(monthly_trend_elect_plot)
 
 ggsave("monthly_trend_elect_plot.jpeg", plot = monthly_trend_elect_plot, width = 12, height = 8, dpi = 300)
+#------------------------------------------------------------------------------------------------------------------------------------
+#Ldavis with lda_model_elect. Recreate dtm 
+library(quanteda)
+library(jsonlite)
+
+data_election <- read.csv("data_election.csv")
+
+
+# Define your custom stopwords. Revisar dos veces si conviene remover "méxico" y "pesos mensuales" para el bigrama. 
+
+custom_stopwords <- c("presidente", "andrés", "manuel", "lópez", "obrador","+","inicia video","finaliza video", "intervención inaudible","méxico","permiso señor","pesos mensuales","pesos","interlocutor","interlocutora","ciento","pregunta","señor","caso","si","entonces","gracias","aquí","va","vamos","ahora","bueno","usted","si","van","centavos","ver","ahí","cómo","pues","ser","así","baja","año","hoy","días")
+all_stopwords <- c(stopwords("es"), custom_stopwords)
+number_patterns <- c(
+  "\\b\\d+\\b",  # Digits
+  "\\b(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciséis|diecisiete|dieciocho|diecinueve|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|cientos|mil|miles|millón|millones)\\b"  # Written numbers in Spanish
+)
+
+data_election$content <- tolower(data_election$content)
+pattern_to_remove <- "^\\d{4}: Año de [^.]*\\.?"
+data_election$content <- gsub(pattern_to_remove, "", data_election$content)
+
+#tokenize 
+tokens_data <- data_election$content %>%
+  tokens(remove_punct = TRUE) %>%
+  tokens_remove(pattern = all_stopwords, case_insensitive = TRUE) %>%
+  tokens_remove(pattern = number_patterns, valuetype = "regex", case_insensitive = TRUE) %>%
+  tokens_ngrams(n = 1:2)
+
+
+dfm_data <- tokens_data |> 
+  dfm() |> 
+  dfm_trim(min_termfreq = 15)
+
+
+#print(dfm_data)
+
+num_topics <- 10  
+set.seed(123)
+#lda_model_elect <- LDA(dfm_data, k = num_topics, method = "Gibbs", control=list(alpha=1))
+lda_model_elect2 <- LDA(dfm_data, k = num_topics, method = "Gibbs", control = list(alpha = 5)) 
+
+
+
+top_terms_lemm_elect <- terms(lda_model_elect2, 10)  # Top 10 terms for each topic. Topics are group of words that are the most important to those topics. 
+top_terms_df_lemm_elect <-  as.data.frame(top_terms_lemm_elect)
+
+kable_out_l_elect <-  kable(top_terms_df_lemm_elect, format = "html") 
+html_out_l_elect <- capture.output(kable_out_l_elect)
+
+p_l_elect <- grid.table(top_terms_df_lemm_elect)
+
+
+# Assuming 'data_election$content' is preprocessed consistently
+json_data <- LDAvis::createJSON(
+  phi = posterior(lda_model_elect2)$terms,
+  theta = posterior(lda_model_elect2)$topics,
+  doc.length = rowSums(as.matrix(dtm)),
+  vocab = colnames(dtm),
+  term.frequency = colSums(as.matrix(dtm))
+)
+
+LDAvis::serVis(json_data, open.browser = TRUE)
+
+write(json_data, file = "ldavis_data_election21.json")
+# Visualize the LDA model
+json_file <- "ldavis_data_election21.json"
+json_data <- fromJSON(json_file)
+lda_model_elect2 <- readRDS("lda_elect2_alpha5.rds")
